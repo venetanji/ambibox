@@ -1,0 +1,9 @@
+[package]
+name = "ambibox"
+version = "0.1.0"
+authors = ["Giovanni Lion <giovanni.lion@gmail.com>"]
+
+[dependencies]
+jack-client = "0.1.2"
+openal-rs = "0.1.5"
+rosc = "0.1.5"
