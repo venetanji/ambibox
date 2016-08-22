@@ -7,19 +7,21 @@ use std::str::FromStr;
 use rosc::OscPacket;
 use rosc::OscMessage;
 use rosc::OscType::*;
-use std::collections::HashMap;
 
 mod ambibox;
 use jack_client::client::*;
 
+use openal::al;
+use openal::alc;
+
 struct OscSourceControl<'a> {
-  sources: HashMap<&'a str,*mut ambibox::SourceHandler>,
+  handler: *mut ambibox::SourceHandler,
   client: &'a mut JackClient<ambibox::SourceHandler> 
 }
 
 impl<'a> OscSourceControl<'a> {
-  pub fn new(client: &'a mut JackClient<ambibox::SourceHandler>) -> OscSourceControl<'a> {
-    OscSourceControl {sources: HashMap::new(), client: client}
+  pub fn new(client: &'a mut JackClient<ambibox::SourceHandler>, handler: *mut ambibox::SourceHandler) -> OscSourceControl<'a> {
+    OscSourceControl {handler: handler, client: client}
   }
   
   pub fn run(&mut self) {
@@ -47,25 +49,30 @@ impl<'a> OscSourceControl<'a> {
     }
   }
   
+  fn get_source(&self, source_str: &std::string::String) -> std::option::Option<&ambibox::Source> {
+    unsafe { (*self.handler).sources.get::<std::string::String>(source_str) }
+  }
+  
+  fn source_exists(&self, source_str: std::string::String) -> bool {
+    unsafe { (*self.handler).sources.contains_key::<std::string::String>(&source_str) }
+  }
+  
   fn route_message(&mut self, msg: OscMessage) {
     match msg.addr.as_ref() {
-      "/new_source" => self.new_source_route(msg),
-      "/set_source_position" => self.set_source_position_route(msg),
+      "/new_source" => self.new_source(msg),
+      "/set_source_position" => self.set_source_position(msg),
       _ => {}
     }
   }
   
-  fn new_source_route(&mut self, msg: OscMessage) {
+  fn new_source(&mut self, msg: OscMessage) {
     match msg.args {
       Some(arg) => {
-        match &arg[0] {
-          &String(ref source_str) => {
-            let source = self.sources.get::<str>(&source_str);
-            match source {
-              Some(s) => println!("A source with name '{}' already exists", &source_str),
-              None => {
-                self.sources.insert(&source_str, ambibox::new_source_handler(self.client, &source_str));
-              }
+        match arg[0] {
+          String(ref source_str) => {
+            match self.get_source(&source_str) {
+              Some(source) => println!("Source already exists"),
+              None => unsafe { (*self.handler).new_source(self.client, source_str.clone())}
             }
           },
           _ => {}
@@ -75,17 +82,15 @@ impl<'a> OscSourceControl<'a> {
     }
   }
   
-  fn set_source_position_route(&self, msg: OscMessage) {
+  fn set_source_position(&self, msg: OscMessage) {
     match msg.args {
       Some(arg) => {
         match (&arg[0],&arg[1],&arg[2],&arg[3]) {
           (&String(ref source_str),&Float(x), &Float(y), &Float(z)) => {
-            let source = self.sources.get::<str>(&source_str);
-            match source {
-              Some(ptr) => unsafe { (**ptr).set_position([x,y,z])},
-              None => println!("Source not found")
+            match self.get_source(&source_str) {
+              Some(source) => source.set_position([x,y,z]),
+              None => println!("No source found with name {}", source_str)
             }
-            
           },
           (_,_,_,_) => {}
         }
@@ -97,9 +102,18 @@ impl<'a> OscSourceControl<'a> {
 
 fn main() {
   let mut myclient: JackClient<ambibox::SourceHandler>  = ambibox::new_jack_client();
+  
   myclient = myclient.connect().unwrap();
+  let al_device = alc::Device::open(None).expect("Could not open device");
+  let al_context = al_device.create_context(&[]).expect("Could not create context");
+  al_context.make_current();
+  
   let client_ref = &mut myclient;
-  let mut osc_server = OscSourceControl::new(client_ref);
+  let myhandler: *mut ambibox::SourceHandler = ambibox::new_handler(client_ref,al_context);
+
+  
+  
+  let mut osc_server = OscSourceControl::new(client_ref, myhandler);
   osc_server.run();
 }
 
